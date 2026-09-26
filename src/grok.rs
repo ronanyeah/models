@@ -51,6 +51,21 @@ impl GeneratedImageExt for GeneratedImage {
     }
 }
 
+/// The `web_search` server-side tool, options left at their defaults.
+fn web_search() -> ModelTool {
+    ModelTool::WebSearch {
+        allowed_domains: None,
+        enable_image_search: None,
+        enable_image_understanding: None,
+        excluded_domains: None,
+        // OpenAI-compatibility only; the request is rejected if set.
+        external_web_access: None,
+        filters: None,
+        search_context_size: None,
+        user_location: None,
+    }
+}
+
 /// The `x_search` server-side tool, options left at their defaults.
 fn x_search() -> ModelTool {
     ModelTool::XSearch {
@@ -68,6 +83,8 @@ pub struct GrokClient {
     client: reqwest::Client,
     model: String,
     image_model: String,
+    web_search: bool,
+    x_search: bool,
 }
 
 impl GrokClient {
@@ -78,7 +95,21 @@ impl GrokClient {
             client: reqwest::Client::new(),
             model: MODEL.to_string(),
             image_model: IMAGE_MODEL.to_string(),
+            web_search: false,
+            x_search: false,
         }
+    }
+
+    /// Offer the `web_search` tool, letting the model look things up on the
+    /// web instead of recalling them. Off by default; billed per search.
+    pub fn set_web_search(&mut self, enabled: bool) {
+        self.web_search = enabled;
+    }
+
+    /// Offer the `x_search` tool. Off by default; billed per post and profile
+    /// fetched, not per search.
+    pub fn set_x_search(&mut self, enabled: bool) {
+        self.x_search = enabled;
     }
 
     /// Use a different model for prompts.
@@ -180,6 +211,20 @@ impl GrokClient {
 
     //
 
+    /// The enabled server-side search tools, or `None` when both are off so
+    /// the field is left out of the request entirely.
+    fn tools(&self) -> Option<Vec<ModelTool>> {
+        let tools: Vec<ModelTool> = [
+            self.web_search.then(web_search),
+            self.x_search.then(x_search),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        (!tools.is_empty()).then_some(tools)
+    }
+
     fn extract_response(res: &ModelResponse) -> anyhow::Result<String> {
         let message = res
             .output
@@ -209,7 +254,7 @@ impl GrokClient {
                 role: "user".to_string(),
                 type_: None,
             }]))
-            .tools(Some(vec![x_search()]))
+            .tools(self.tools())
             .text(format.map(|format| ModelResponseConfiguration {
                 format: Some(format),
             }))
